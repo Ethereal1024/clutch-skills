@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# dev-only skills: a local daemon serves them, but they are neither committed
+# nor shipped — the host's scripts/build-server-bundle.sh packages an explicit
+# skill whitelist, and a tracked skill outside it fails that build on purpose
+skills/humanize-writing/
+skills/humanizer-document-zh/
+skills/humanizer-zh/
+skills/wudao-humanize/
