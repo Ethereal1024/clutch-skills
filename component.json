@@ -1,0 +1,35 @@
+{
+  "name": "clutch-skills",
+  "version": "0.1.0",
+  "interface": "cli",
+  "subject": "skill-library",
+  "launch": {
+    "argv": ["{py}", "-m", "clutch_skills"],
+    "importable": true
+  },
+  "requires": ["python"],
+  "vars": { "root": "config.skills_dir" },
+  "ui": { "label": "skill library", "status": true },
+  "tools": [
+    {
+      "name": "load_skill",
+      "description": "Load a skill's instructions into context. Available skills are listed in the system prompt; call this ONLY when the task falls in a skill's domain, otherwise ignore them. The loaded instructions then guide how you work.",
+      "parameters": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": "$skills",
+            "description": "skill to load, one of: $skills"
+          },
+          "file": {
+            "type": "string",
+            "description": "optional file inside the skill directory to read instead of SKILL.md (e.g. resources/template.html)"
+          }
+        },
+        "required": ["name"]
+      },
+      "command": "--envelope [--root {root}] show {name} [--file {file}]",
+      "gate": "skills"
+    }
+  ]
+}
