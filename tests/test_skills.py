@@ -165,6 +165,19 @@ def test_catalog_section_is_one_line_per_skill(library: Path):
     ]
 
 
+def test_prompt_md_expands_to_the_catalog_section(library: Path):
+    """The fragment the HOST reads (component.json `prompt`) carries the header in
+    our own words and says `$skills` on a line of its own; the block the host puts
+    there is exactly the lines catalog_section renders. So the wording exists once
+    per side and the two cannot drift — and a human `list` reads the same."""
+    text = (Path(skills.__file__).parent.parent / "PROMPT.md").read_text(encoding="utf-8")
+    lines = text.strip().splitlines()
+    assert lines[-1].strip() == "$skills"  # its own line: that IS the host's block rule
+    section = skills.catalog_section(skills.catalog(library)).splitlines()
+    assert lines[:-1] == section[:1]  # the header, agreed word for word
+    assert [*lines[:-1], *section[1:]] == section
+
+
 def test_no_other_clutch_module_is_imported():
     """R2: the star topology is a rule, not a habit — this package imports no
     sibling module, and never reaches outside its own tree."""

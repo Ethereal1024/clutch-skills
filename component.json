@@ -9,6 +9,8 @@
   },
   "requires": ["python"],
   "vars": { "root": "config.skills_dir" },
+  "facts": { "skills": "--no-server --facts [--root {root}] list" },
+  "prompt": "PROMPT.md",
   "ui": { "label": "skill library", "status": true },
   "tools": [
     {

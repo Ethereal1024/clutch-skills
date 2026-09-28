@@ -6,6 +6,11 @@
 - --json: ONE compact JSON object on stdout for both outcomes, so callers parse
   stdout plus the exit code, never prose. The object is exactly what the service
   answered (its contract), which is also what the offline path builds.
+- --facts: the HOST's question, not ours — with `list`, one JSON array of
+  `{"name", "description"}` on stdout, the shape the host reads a published fact
+  in (its `component.json` says which line asks for it). Read from the filesystem
+  in this process, never from a service: the host asks while it is assembling a
+  prompt, and starting a daemon to answer it would be absurd.
 - Every call rides the service for the root: a live daemon is reused, otherwise
   one is lazily started and discovery-keyed. `--no-server` answers the reads
   (`list`, `show`) from the filesystem in this one process; `health` and `root`
@@ -39,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     parser.add_argument("--json", action="store_true", help="emit one JSON object on stdout instead of human text")
+    parser.add_argument(
+        "--facts",
+        action="store_true",
+        help="answer a HOST fact: with `list`, one JSON array of {name, description} on stdout",
+    )
     parser.add_argument(
         "--envelope",
         action="store_true",
@@ -79,7 +89,12 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
         except (AttributeError, OSError, ValueError):
             pass
-    args = build_parser().parse_args(argv)  # usage errors exit 2 straight from here
+    parser = build_parser()
+    args = parser.parse_args(argv)  # usage errors exit 2 straight from here
+    if args.facts and (args.json or args.envelope):
+        # One answer shape at a time: the host parses stdout as its own JSON, so
+        # a second shape mixed in would be a silent misread rather than an error.
+        parser.error("--facts is the host's answer shape: it cannot be combined with --json or --envelope")
     try:
         payload, text = _run(args)
     except SkillError as err:  # a refusal, library-side
@@ -111,6 +126,13 @@ def _run(args: argparse.Namespace) -> tuple[dict, str]:
         # died during startup, which is what a daemon pointed at a missing
         # directory looks like from the outside.
         skills.checked_root(root)
+    if args.facts:
+        # The host's own question: which skills are here. Answered from the
+        # filesystem in this process — the host asks it while assembling a prompt,
+        # before any call exists — and only `list` has such an answer.
+        if args.command != "list":
+            raise SkillError("bad-command", f"--facts answers `list` only, not `{args.command}`")
+        return server.catalog_payload(skills.checked_root(root)), ""
     if args.command == "list":
         payload = server.catalog_payload(skills.checked_root(root)) if args.no_server else _client(args).catalog()
         return payload, _section(payload) or f"(no skills in {payload['root']})"
@@ -158,16 +180,25 @@ def _section(payload: dict) -> str:
 
 
 def _emit(payload: dict, text: str, args: argparse.Namespace) -> None:
-    """One JSON object, the host envelope, or the human text with exactly one
-    trailing newline — so `show` can be piped straight into a file and diffed
-    against the SKILL.md.
+    """One JSON object, the host envelope, the host's fact array, or the human
+    text with exactly one trailing newline — so `show` can be piped straight into
+    a file and diffed against the SKILL.md.
 
     `--envelope` is the mode the Clutch host drives this CLI in: exactly one
     {content, code} object per call, `content` being the model-facing text (for
     `show`, the skill file itself). `--json` stays the module's own machine
-    contract (the raw wire payload).
+    contract (the raw wire payload). `--facts` is the third party in the room —
+    the HOST's fact shape, which is why it carries only the two keys the host
+    knows how to read out of our answer.
     """
-    if args.envelope:
+    if args.facts:
+        print(
+            json.dumps(
+                [{"name": s["name"], "description": s["description"]} for s in payload["skills"]],
+                ensure_ascii=False,
+            )
+        )
+    elif args.envelope:
         print(json.dumps({"content": text, "code": EXIT_OK}, ensure_ascii=False))
     elif args.json:
         print(json.dumps(payload, ensure_ascii=False))

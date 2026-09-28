@@ -181,3 +181,43 @@ def test_the_default_root_is_the_bundled_library(run):
         "web-design",
     ]
     assert proc.stderr == ""
+
+
+# -- --facts: the HOST's question about our library ------------------------------
+
+
+def test_facts_answers_the_host_shape_without_starting_a_service(library: Path, run, discovery_home: Path):
+    """The line the host asks a fact with (component.json `facts.skills`): one
+    JSON array of {name, description}, read here and now — the host asks this
+    while it is assembling a prompt, so no daemon may be started for it."""
+    proc = run("--root", library, "--no-server", "--facts", "list")
+    assert (proc.returncode, proc.stderr) == (0, "")
+    assert json.loads(proc.stdout) == [
+        {"name": "alpha", "description": "the first skill"},
+        {"name": "beta", "description": ""},
+    ]
+    assert records(discovery_home) == []
+
+
+def test_facts_answers_list_only(library: Path, run):
+    proc = run("--root", library, "--facts", "show", "alpha")
+    assert proc.returncode == 1
+    assert proc.stdout == ""  # nothing for the host to misread as an answer
+    assert "--facts answers `list` only" in proc.stderr
+
+
+def test_facts_never_mixes_with_the_other_answer_shapes(library: Path, run):
+    for other in ("--json", "--envelope"):
+        proc = run("--root", library, "--facts", other, "list")
+        assert proc.returncode == 2  # a usage error, not a shape the host must guess
+        assert "cannot be combined" in proc.stderr
+
+
+def test_facts_reports_a_bad_root_on_stderr(tmp_path: Path, run):
+    """The host reads a failed answer's reason off stderr (it parses stdout as
+    the answer itself), so the reason has to be there and stdout has to be empty."""
+    missing = tmp_path / "missing"
+    proc = run("--root", missing, "--facts", "list")
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+    assert f"skills root is not a directory: {missing}" in proc.stderr
