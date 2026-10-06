@@ -1,6 +1,6 @@
 [project]
 name = "clutch-skills"
-version = "0.1.0"
+version = "0.1.1"
 description = "Standalone skill-library service: the catalog and one skill file at a time, served over loopback HTTP by a per-root daemon (stdlib only)."
 requires-python = ">=3.10"
 license = "MIT"
