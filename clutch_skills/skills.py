@@ -109,10 +109,10 @@ def read_text(
     so an alias inside the directory never disguises which file was read.
     """
     skill = find(root, name)
-    target = _contained(skill.path, file)
+    target = contained(skill.path, file)
     if not target.is_file():
         raise SkillError("bad-file", f"not a file: {file}")
-    return skill, _relative(skill.path, target), _read(target, max_bytes)
+    return skill, relative(skill.path, target), _read(target, max_bytes)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -154,8 +154,13 @@ def catalog_section(skills: list[Skill]) -> str:
 # ---- internals --------------------------------------------------------------
 
 
-def _contained(base: Path, rel: str) -> Path:
-    """Resolve `rel` inside `base`, refusing every spelling that leaves it."""
+def contained(base: Path, rel: str) -> Path:
+    """Resolve `rel` inside `base`, refusing every spelling that leaves it.
+
+    Public because it is the module's ONE containment rule: reading a file out of
+    a skill (`read_text`) and writing one into it (`install`) resolve the same
+    way, so a path that cannot be read cannot be written either.
+    """
     text = (rel or "").strip()
     if not text:
         raise SkillError("bad-file", "file is required")
@@ -169,10 +174,10 @@ def _contained(base: Path, rel: str) -> Path:
     return target
 
 
-def _relative(base: Path, target: Path) -> str:
+def relative(base: Path, target: Path) -> str:
     try:
         return target.relative_to(base.resolve()).as_posix()
-    except ValueError:  # unreachable: _contained already proved containment
+    except ValueError:  # unreachable: `contained` already proved containment
         return target.name
 
 

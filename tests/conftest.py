@@ -19,7 +19,10 @@ import signal
 import subprocess
 import sys
 import time
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 import pytest
 
@@ -123,6 +126,34 @@ def library(tmp_path: Path) -> Path:
     (root / "gamma").mkdir()  # no SKILL.md -> not a skill
     (root / "loose.txt").write_text("not a skill\n", encoding="utf-8")
     return root
+
+
+@pytest.fixture
+def skill_source(tmp_path: Path):
+    """`(tree, url)` to install FROM: a loopback http server over a scratch tree.
+
+    Loopback http is one of the two schemes the installer accepts, which is what
+    keeps the happy path of an install offline and deterministic — the source is
+    a real URL over a real socket, not a stub. The handler is silenced so a test's
+    stderr stays the CLI's own, and the server is daemon-threaded and closed here
+    so nothing outlives the test.
+    """
+
+    class Quiet(SimpleHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:
+            pass
+
+    tree = tmp_path / "source"
+    tree.mkdir()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(Quiet, directory=str(tree)))
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield tree, f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
 
 
 def _cli(*args: object, cwd: Path | str, timeout: float = 60.0) -> subprocess.CompletedProcess:

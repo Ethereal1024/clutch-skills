@@ -8,8 +8,7 @@
     "importable": true
   },
   "requires": ["python"],
-  "vars": { "root": "config.skills_dir" },
-  "facts": { "skills": "--no-server --facts [--root {root}] list" },
+  "facts": { "skills": "--no-server --facts list" },
   "prompt": "PROMPT.md",
   "ui": { "label": "skill library", "status": true },
   "tools": [
@@ -30,7 +29,7 @@
         },
         "required": ["name"]
       },
-      "command": "--envelope [--root {root}] show {name} [--file {file}]",
+      "command": "--envelope show {name} [--file {file}]",
       "gate": "skills"
     }
   ]

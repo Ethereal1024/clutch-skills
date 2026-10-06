@@ -6,6 +6,7 @@ is the exit code and the bytes on stdout/stderr — the contract a caller reads.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -168,8 +169,9 @@ def test_no_server_still_reports_a_bad_skill(tmp_path: Path, run):
 
 
 def test_the_default_root_is_the_bundled_library(run):
-    """A bare `list` serves the library the module ships — the four skills the
-    host's bundle whitelist names, read out of `skills/` next to the package."""
+    """A bare `list` serves the library the component ships — the skills under
+    `skills/` next to the package, which is also the root this CLI gets when
+    nobody says otherwise."""
     proc = run("--no-server", "list")
     assert proc.returncode == 0
     lines = proc.stdout.splitlines()
@@ -221,3 +223,161 @@ def test_facts_reports_a_bad_root_on_stderr(tmp_path: Path, run):
     assert proc.returncode == 1
     assert proc.stdout == ""
     assert f"skills root is not a directory: {missing}" in proc.stderr
+
+
+# -- install: the library's own write verb ---------------------------------------
+
+DELTA_SKILL = "---\nname: delta\ndescription: fetched from a source\n---\n\n# Delta\n\nFetched body.\n"
+
+
+def test_install_fetches_the_files_into_the_root_and_answers_the_catalog(
+    library: Path, run, skill_source, discovery_home: Path
+):
+    """One call: bytes arrive from a real URL, land under the root, get recorded,
+    and the answer is the catalog `list` would give — plus what changed."""
+    tree, source = skill_source
+    write_skill(tree, "delta", DELTA_SKILL, notes__md=ALPHA_NOTES)
+    proc = run(
+        "--root", library, "install", "delta", f"{source}/delta", "--file", "SKILL.md", "--file", "notes.md"
+    )
+    assert (proc.returncode, proc.stderr) == (0, "")
+    lines = proc.stdout.splitlines()
+    assert lines[:5] == [
+        "installed: delta",
+        f"source: {source}/delta",
+        f"root: {library}",
+        f"- SKILL.md: {len(DELTA_SKILL.encode())} bytes (installed)",
+        f"- notes.md: {len(ALPHA_NOTES.encode())} bytes (installed)",
+    ]
+    assert lines[5:] == [*CATALOG_LINES, "- delta: fetched from a source"]
+
+    assert (library / "delta" / "SKILL.md").read_text(encoding="utf-8") == DELTA_SKILL
+    assert (library / "delta" / "notes.md").read_text(encoding="utf-8") == ALPHA_NOTES
+    provenance = json.loads((library / "delta" / "PROVENANCE.json").read_text(encoding="utf-8"))
+    assert provenance["skill"] == "delta"
+    assert provenance["source"] == f"{source}/delta"
+    assert set(provenance["files"]) == {"SKILL.md", "notes.md"}
+    assert provenance["files"]["notes.md"] == {
+        "sha256": hashlib.sha256(ALPHA_NOTES.encode()).hexdigest(),
+        "bytes": len(ALPHA_NOTES.encode()),
+    }
+    assert records(discovery_home) == []  # writing into a root needs no daemon
+    # ...and the service a later read starts serves what was just written
+    assert run("--root", library, "--no-server", "list").stdout.splitlines()[-1] == "- delta: fetched from a source"
+
+
+def test_install_fetches_only_the_files_it_was_told(library: Path, run, skill_source):
+    """The job is `--file` (default SKILL.md), not "whatever is in the directory":
+    an unasked-for file in the source is not what this library ends up holding."""
+    tree, source = skill_source
+    write_skill(tree, "delta", DELTA_SKILL)
+    (tree / "delta" / "extra.md").write_text("never asked for\n", encoding="utf-8")
+    proc = run("--root", library, "install", "delta", f"{source}/delta")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines()[3] == f"- SKILL.md: {len(DELTA_SKILL.encode())} bytes (installed)"
+    assert sorted(p.name for p in (library / "delta").iterdir()) == ["PROVENANCE.json", "SKILL.md"]
+
+
+def test_a_second_install_says_unchanged_and_new_bytes_say_installed(library: Path, run, skill_source):
+    """`state` is about the library, not about whether a fetch happened: the same
+    bytes change nothing, different bytes do."""
+    tree, source = skill_source
+    write_skill(tree, "delta", DELTA_SKILL)
+    url = f"{source}/delta"
+    assert run("--root", library, "install", "delta", url).returncode == 0
+
+    again = run("--root", library, "install", "delta", url)
+    assert f"- SKILL.md: {len(DELTA_SKILL.encode())} bytes (unchanged)" in again.stdout
+    assert again.stdout.splitlines()[4:] == [*CATALOG_LINES, "- delta: fetched from a source"]
+
+    (tree / "delta" / "SKILL.md").write_text(DELTA_SKILL + "\nmore\n", encoding="utf-8")
+    assert "(installed)" in run("--root", library, "install", "delta", url).stdout
+    assert (library / "delta" / "SKILL.md").read_text(encoding="utf-8") == DELTA_SKILL + "\nmore\n"
+
+
+def test_a_source_that_is_not_https_is_refused(library: Path, jerr):
+    """A skill comes from the internet over https — or from this very machine
+    over loopback http. Anything else is a source this verb does not read."""
+    for bad in ("http://example.com/skill", "ftp://example.com/skill", "file:///tmp/skill", "/tmp/skill", ""):
+        code, body = jerr("--root", library, "install", "delta", bad)
+        assert code == 1
+        assert "must be an https directory URL" in body["error"]
+    assert not (library / "delta").exists()
+
+
+def test_a_skill_name_is_one_directory_name_not_a_path(library: Path, jerr, skill_source, tmp_path: Path):
+    tree, source = skill_source
+    for bad in ("", ".", "..", "a/b", "../evil", "a\\b"):
+        code, body = jerr("--root", library, "install", bad, source)
+        assert code == 1
+        assert "one directory name, not a path" in body["error"]
+    assert sorted(p.name for p in library.iterdir()) == ["alpha", "beta", "gamma", "loose.txt"]
+    assert not (tmp_path / "evil").exists() and not (tmp_path / "a").exists()
+
+
+def test_a_file_that_leaves_the_skill_is_refused(library: Path, jerr, skill_source):
+    """A path the reader could not open out of a skill is not one the writer gets
+    to create — same rule, one implementation (`skills.contained`)."""
+    tree, source = skill_source
+    write_skill(tree, "delta", DELTA_SKILL)
+    code, body = jerr("--root", library, "install", "delta", f"{source}/delta", "--file", "../loose.txt")
+    assert (code, body["error"].split(":")[0]) == (1, "path escapes the skill directory")
+    code, body = jerr("--root", library, "install", "delta", f"{source}/delta", "--file", "/etc/hostname")
+    assert (code, body["error"].split(":")[0]) == (1, "a file is a relative path inside the skill")
+    assert not (library / "delta").exists()  # nothing was created, let alone written
+    assert (library / "loose.txt").read_text(encoding="utf-8") == "not a skill\n"
+
+
+def test_a_source_that_does_not_answer_says_so_without_a_traceback(library: Path, jerr, run, skill_source):
+    _tree, source = skill_source
+    code, body = jerr("--root", library, "install", "delta", f"{source}/nope")
+    assert code == 1
+    assert body["error"] == f"{source}/nope/SKILL.md answered 404"
+    code, body = jerr("--root", library, "install", "delta", "http://127.0.0.1:1/skill")
+    assert code == 1
+    assert body["error"].startswith("http://127.0.0.1:1/skill/SKILL.md could not be reached:")
+    # a fetch that failed wrote nothing: no half-installed skill in the library
+    assert not (library / "delta").exists()
+    assert run("--root", library, "--no-server", "list").stdout.splitlines() == CATALOG_LINES
+
+
+def test_json_carries_the_installs_own_facts_beside_the_catalog(library: Path, jok, skill_source):
+    tree, source = skill_source
+    write_skill(tree, "delta", DELTA_SKILL)
+    payload = jok("--root", library, "install", "delta", f"{source}/delta")
+    assert set(payload) == {"root", "skills", "skill", "source", "files"}
+    assert payload["root"] == str(library)
+    assert payload["skill"] == "delta"
+    assert payload["source"] == f"{source}/delta"
+    assert payload["skills"] == server.catalog_payload(library)["skills"]
+    assert payload["files"] == [
+        {
+            "file": "SKILL.md",
+            "bytes": len(DELTA_SKILL.encode()),
+            "sha256": hashlib.sha256(DELTA_SKILL.encode()).hexdigest(),
+            "state": "installed",
+        }
+    ]
+
+
+def test_install_takes_the_root_it_writes_to_not_a_service(
+    library: Path, jerr, run, skill_source, discovery_home: Path
+):
+    _tree, source = skill_source
+    for flag, value in (("--url", "http://127.0.0.1:1"), ("--port", "1")):
+        code, body = jerr("--root", library, flag, value, "install", "delta", source)
+        assert code == 1
+        assert "takes neither --url nor --port" in body["error"]
+    proc = run("--root", library, "--facts", "install", "delta", source)
+    assert proc.returncode == 1
+    assert "--facts answers `list` only" in proc.stderr
+    assert records(discovery_home) == []
+
+
+def test_a_missing_root_is_refused_before_anything_is_fetched(tmp_path: Path, jerr, skill_source, discovery_home):
+    _tree, source = skill_source
+    missing = tmp_path / "missing"
+    code, body = jerr("--root", missing, "install", "delta", source)
+    assert code == 1
+    assert body["error"] == f"skills root is not a directory: {missing}"
+    assert records(discovery_home) == []

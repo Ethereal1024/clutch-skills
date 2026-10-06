@@ -11,10 +11,15 @@
   in (its `component.json` says which line asks for it). Read from the filesystem
   in this process, never from a service: the host asks while it is assembling a
   prompt, and starting a daemon to answer it would be absurd.
-- Every call rides the service for the root: a live daemon is reused, otherwise
-  one is lazily started and discovery-keyed. `--no-server` answers the reads
-  (`list`, `show`) from the filesystem in this one process; `health` and `root`
-  are refused there, because the answer IS daemon state.
+- `install` is the library's own write verb: it fetches a skill's files from an
+  https tree (a loopback http one is allowed too, for a preview on this machine)
+  and puts them under `--root`, then answers the same catalog shape `list` does.
+  It is strictly local — a service elsewhere serves a different library — so it
+  takes neither `--url` nor `--port`.
+- Every other call rides the service for the root: a live daemon is reused,
+  otherwise one is lazily started and discovery-keyed. `--no-server` answers the
+  reads (`list`, `show`) from the filesystem in this one process; `health` and
+  `root` are refused there, because the answer IS daemon state.
 
 Exit codes: 0 ok, 1 the library refused (unknown skill, bad or unreadable file,
 bad root), 2 usage error or transport trouble. Nothing is retried locally after
@@ -30,6 +35,7 @@ import traceback
 from pathlib import Path
 
 from . import __version__, client, server, skills
+from .install import DEFAULT_FILES, install
 from .skills import SkillError
 
 EXIT_OK = 0
@@ -75,6 +81,20 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", help="one skill file's text (default SKILL.md)")
     show.add_argument("name", help="skill name or its directory name")
     show.add_argument("--file", default="", metavar="REL", help="file inside the skill directory (default SKILL.md)")
+
+    install_cmd = sub.add_parser("install", help="fetch a skill from an https tree into the served root")
+    install_cmd.add_argument("name", help="skill name: one directory name, never a path")
+    install_cmd.add_argument(
+        "source",
+        help="https directory URL holding the files (loopback http is allowed for a local preview)",
+    )
+    install_cmd.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="REL",
+        help="file to fetch, relative to the skill (repeatable; default SKILL.md)",
+    )
 
     root = sub.add_parser("root", help="print the served root, or re-point the service at DIR")
     root.add_argument("dir", nargs="?", default="", metavar="DIR")
@@ -133,6 +153,16 @@ def _run(args: argparse.Namespace) -> tuple[dict, str]:
         if args.command != "list":
             raise SkillError("bad-command", f"--facts answers `list` only, not `{args.command}`")
         return server.catalog_payload(skills.checked_root(root)), ""
+    if args.command == "install":
+        # Writing into a library is that library's own business, and the library
+        # is the root we serve: `install` is local, so a service elsewhere is not
+        # a second way to do it but a different library.
+        if args.url or args.port:
+            raise SkillError("bad-command", "install writes to --root: it takes neither --url nor --port")
+        payload = install(
+            skills.checked_root(root), args.name, args.source, args.file or DEFAULT_FILES
+        )
+        return payload, _install_text(payload)
     if args.command == "list":
         payload = server.catalog_payload(skills.checked_root(root)) if args.no_server else _client(args).catalog()
         return payload, _section(payload) or f"(no skills in {payload['root']})"
@@ -177,6 +207,20 @@ def _section(payload: dict) -> str:
         for s in payload["skills"]
     ]
     return skills.catalog_section(skills_here)
+
+
+def _install_text(payload: dict) -> str:
+    """What the install did (source, root, one line per file with its size and
+    whether the bytes actually changed), then the catalog it left behind — the
+    two things a caller wants in one answer."""
+    lines = [
+        f"installed: {payload['skill']}",
+        f"source: {payload['source']}",
+        f"root: {payload['root']}",
+        *(f"- {f['file']}: {f['bytes']} bytes ({f['state']})" for f in payload["files"]),
+    ]
+    section = _section(payload)
+    return "\n".join(lines) + (f"\n{section}" if section else "")
 
 
 def _emit(payload: dict, text: str, args: argparse.Namespace) -> None:

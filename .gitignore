@@ -1,3 +1,4 @@
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -5,8 +6,8 @@ __pycache__/
 *.egg-info/
 
 # dev-only skills: a local daemon serves them, but they are neither committed
-# nor shipped — the host's scripts/build-server-bundle.sh packages an explicit
-# skill whitelist, and a tracked skill outside it fails that build on purpose
+# nor shipped — the library that ships is exactly the tracked directories beside
+# this file, so a skill only partly written here never lands in it
 skills/humanize-writing/
 skills/humanizer-document-zh/
 skills/humanizer-zh/

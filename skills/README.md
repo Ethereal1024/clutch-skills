@@ -1,10 +1,10 @@
 # The bundled skills root
 
-This directory is the default `--root` of the skills service: the module ships
-the library below (the four skills in `SHIPPED_SKILLS` of the host's
-`scripts/build-server-bundle.sh`), and the host may instead point a daemon
-anywhere else with `--root DIR` (or by re-pointing a live one with
-`POST /root`).
+This directory is the default `--root` of the skills service: the library below
+ships with the component, and a caller may serve another root instead with
+`--root DIR` (or by re-pointing a live daemon with `POST /root`). Installing a
+skill into a root is this component's own verb: `clutch-skills install NAME
+SOURCE`.
 
 What makes a directory a skill:
 

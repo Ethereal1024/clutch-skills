@@ -10,6 +10,7 @@ loopback HTTP, stdlib only, importing no host code.
 clutch-skills/skills/       the bundled root (any root can be served instead)
 clutch-skills/clutch_skills/
   skills.py                 the library: scan, frontmatter, containment, read
+  install.py                the library's write verb: fetch a skill into the root
   server.py                 the service: HTTP skin over the library
   client.py                 thin client: find or lazily start a daemon
   discovery.py              how a caller finds the daemon for a root
@@ -21,6 +22,7 @@ clutch-skills/clutch_skills/
 ```
 python3 -m clutch_skills [--json] [--root DIR] list
 python3 -m clutch_skills [--json] [--root DIR] show NAME [--file REL]
+python3 -m clutch_skills [--json] [--root DIR] install NAME SOURCE [--file REL]
 python3 -m clutch_skills [--json] [--root DIR] root [DIR]
 python3 -m clutch_skills [--json] [--root DIR] health
 ```
@@ -36,6 +38,36 @@ and diffed.
 and starts nothing; `health` and `root` are refused there, because the answer IS
 daemon state. `--url`/`--port` talk to a service you already know instead of
 discovering one.
+
+## Installing a skill
+
+`install` is the library's own write verb — nobody else writes into a root this
+component serves, because a host-side installer writing into an installed
+component's version directory is how two copies of one library start disagreeing:
+
+```
+python3 -m clutch_skills --root /tmp/library install web-design \
+    https://raw.githubusercontent.com/me/skills/main/web-design --file SKILL.md
+installed: web-design
+source: https://raw.githubusercontent.com/me/skills/main/web-design
+root: /tmp/library
+- SKILL.md: 8123 bytes (installed)
+Available skills (call load_skill to read one when relevant):
+- web-design: pages, html, css, javascript, landing page, frontend, website
+```
+
+The source is an https directory URL held to the given files (`--file`,
+repeatable; default `SKILL.md`), and loopback `http` is allowed too — nothing
+crosses a wire there, and a preview server on this machine is how an operator
+checks a skill before publishing it. Every file arrives before any is written, so
+a source that dies halfway leaves the library exactly as it was; each file is
+capped at 1 MB; `PROVENANCE.json` records the source, the moment and the sha256 of
+each file. The write side reuses the reader's containment rule
+(`skills.contained`), so a path that cannot be read out of a skill is not one that
+can be written into it either. `install` answers the same catalog shape `list`
+does plus `skill`/`source`/`files`, and it talks to the root directly: it takes
+neither `--url` nor `--port`, because a service elsewhere serves a different
+library.
 
 ## The wire contract
 
