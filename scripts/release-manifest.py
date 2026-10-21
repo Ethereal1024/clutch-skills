@@ -14,7 +14,7 @@ script never needs to know its own URL: the same manifest works from a GitHub
 release, a mirror, or a directory on disk. `any` is the artifact key a
 platform-independent build uses — this component is pure Python (stdlib only),
 so one tar serves every machine; a platform-specific build would add keys like
-`linux-x86_64` beside it (the host's COMPONENTS.md §一 has the vocabulary).
+`linux-x86_64` beside it (agent/tools/catalog.py has the vocabulary).
 
 Both digests are sha256 of the BYTES as published: the client verifies the
 artifact it downloads against `artifacts` before handing anything to a host, and
