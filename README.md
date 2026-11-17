@@ -7,24 +7,25 @@ answers those three questions — catalog, one file, a re-pointed root — over
 loopback HTTP, stdlib only, importing no host code.
 
 ```
-clutch-skills/skills/       the bundled root (any root can be served instead)
+clutch-skills/skills/       the skills this module ships (seeded, not the library)
 clutch-skills/clutch_skills/
   skills.py                 the library: scan, frontmatter, containment, read
   install.py                the library's write verb: fetch a skill into the root
   server.py                 the service: HTTP skin over the library
   client.py                 thin client: find or lazily start a daemon
   discovery.py              how a caller finds the daemon for a root
+  settings.py               the knobs a host drew for this component
   cli.py                    flags -> service -> stdout
 ```
 
 ## CLI
 
 ```
-python3 -m clutch_skills [--json] [--root DIR] list
-python3 -m clutch_skills [--json] [--root DIR] show NAME [--file REL]
-python3 -m clutch_skills [--json] [--root DIR] install NAME SOURCE [--file REL]
-python3 -m clutch_skills [--json] [--root DIR] root [DIR]
-python3 -m clutch_skills [--json] [--root DIR] health
+python3 -m clutch_skills [--json] [--root DIR] [--settings PATH] list
+python3 -m clutch_skills [--json] [--root DIR] [--settings PATH] show NAME [--file REL]
+python3 -m clutch_skills [--json] [--root DIR] [--settings PATH] install NAME SOURCE [--file REL]
+python3 -m clutch_skills [--json] [--root DIR] [--settings PATH] root [DIR]
+python3 -m clutch_skills [--json] [--root DIR] [--settings PATH] health
 ```
 
 Exit codes: `0` ok, `1` the library refused (unknown skill, bad or unreadable
@@ -38,6 +39,39 @@ and diffed.
 and starts nothing; `health` and `root` are refused there, because the answer IS
 daemon state. `--url`/`--port` talk to a service you already know instead of
 discovering one.
+
+## Where the library lives
+
+A library is a place on THIS machine, never inside whatever directory a
+component was installed into: a payload is replaced by the next version, so a
+library kept in one is orphaned by the next upgrade. The root is resolved once,
+before anything is looked up, in three steps:
+
+1. `--root DIR` — what this call asked for;
+2. `library.root` from the settings document — what the person set in the host's
+   form for this component;
+3. `~/.clutch/skills` — this machine's own library, next to the app's
+   `components/` and `settings.json`.
+
+The third step is seeded once: when that directory does not exist yet, the
+skills shipped under `clutch-skills/skills/` are copied into it and are the
+person's from then on — an upgrade ships a new payload but never writes over a
+library that already exists. A skill already present under a name the seed also
+carries is left alone.
+
+`library.enabled` is the other declaration, and `false` is the only thing that
+turns it off: `--facts list` then answers an empty catalog, from which
+everything else follows with no second rule — the gate that fact stands behind
+has nothing in it, so the host withdraws `load_skill` and drops the prompt line
+that spends the catalog. Nothing on disk is read, moved or deleted.
+
+Settings arrive over the interface a component already has for host facts:
+`component.json` declares `vars: {settings: "host.settings"}`, the host fills
+that placeholder with the path of the document it wrote (every declared knob,
+defaults included), and every statement that names `{settings}` — the fact line
+and the tool line — reads it. So this module owns no defaults of its own: the
+declaration's are the only ones, and a knob it does not recognize drops to its
+default rather than refusing to run.
 
 ## Installing a skill
 

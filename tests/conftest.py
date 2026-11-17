@@ -117,6 +117,21 @@ def discovery_home(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture
+def home(tmp_path: Path, monkeypatch) -> Path:
+    """A machine whose library does not exist yet: `~` is a scratch directory.
+
+    The default root is THIS machine's own (`~/.clutch/skills`, settings.LIBRARY),
+    so a test that says nothing about the root would read — and seed — the
+    library of whoever ran the suite.
+    """
+    root = tmp_path / "home"
+    root.mkdir()
+    monkeypatch.setenv("HOME", str(root))
+    monkeypatch.setenv("USERPROFILE", str(root))  # the same thing on Windows
+    return root
+
+
+@pytest.fixture
 def library(tmp_path: Path) -> Path:
     """A skills root: two skills, one directory without SKILL.md, one loose file."""
     root = tmp_path / "skills"

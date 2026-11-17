@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shlex
 from pathlib import Path
 
-from conftest import ALPHA_NOTES, ALPHA_SKILL, BETA_SKILL, write_skill
+from conftest import ALPHA_NOTES, ALPHA_SKILL, BETA_SKILL, ROOT, write_skill
 
 from clutch_skills import __version__, server
 
@@ -168,21 +170,20 @@ def test_no_server_still_reports_a_bad_skill(tmp_path: Path, run):
     assert "unknown skill: alpha" in proc.stderr
 
 
-def test_the_default_root_is_the_bundled_library(run):
-    """A bare `list` serves the library the component ships — the skills under
-    `skills/` next to the package, which is also the root this CLI gets when
-    nobody says otherwise."""
+def test_a_bare_list_serves_this_machines_own_library(home: Path, run):
+    """A bare `list` serves `~/.clutch/skills`, SEEDED once with the skills this
+    component ships — not the payload they ship in: each version installs as its
+    own payload, so a library in there is a copy the next version orphans.
+    """
     proc = run("--no-server", "list")
-    assert proc.returncode == 0
-    lines = proc.stdout.splitlines()
-    assert lines[0] == CATALOG_LINES[0]
-    assert [line.split(":")[0].removeprefix("- ") for line in lines[1:]] == [
-        "readme-crafter",
-        "readme-doctor",
-        "refactor",
-        "web-design",
-    ]
-    assert proc.stderr == ""
+    assert (proc.returncode, proc.stderr) == (0, "")
+    seeded = [line.split(":")[0].removeprefix("- ") for line in proc.stdout.splitlines()[1:]]
+    assert seeded  # the shipped library is not empty, or nothing was proven
+    assert seeded == [s["name"] for s in server.catalog_payload(server.BUNDLED_ROOT)["skills"]]
+    # ...and this machine's library now holds what it shipped, as its own copy
+    assert sorted(p.name for p in (home / ".clutch" / "skills").iterdir()) == sorted(
+        p.name for p in server.BUNDLED_ROOT.iterdir() if p.is_dir()
+    )
 
 
 # -- --facts: the HOST's question about our library ------------------------------
@@ -223,6 +224,98 @@ def test_facts_reports_a_bad_root_on_stderr(tmp_path: Path, run):
     assert proc.returncode == 1
     assert proc.stdout == ""
     assert f"skills root is not a directory: {missing}" in proc.stderr
+
+
+# -- settings: what the host's form writes, read back -----------------------------
+
+
+def document(tmp_path: Path, **values: object) -> Path:
+    """One settings document, in the shape the `host.settings` fact names."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(values), encoding="utf-8")
+    return path
+
+
+def test_settings_point_the_library_at_one_that_already_exists(library: Path, tmp_path: Path, run):
+    """`library.root` is the whole override: a person who keeps a library
+    elsewhere names it once, and the fact answers from there."""
+    doc = document(tmp_path, **{"library.root": str(library)})
+    proc = run("--no-server", "--settings", doc, "--facts", "list")
+    assert (proc.returncode, proc.stderr) == (0, "")
+    assert [entry["name"] for entry in json.loads(proc.stdout)] == ["alpha", "beta"]
+
+
+def test_a_switched_off_library_answers_an_empty_fact(library: Path, tmp_path: Path, run):
+    """Off is an EMPTY catalog and nothing else: the gate that stands behind this
+    fact shuts, so the tool and the prompt paragraph go with it. The library
+    itself is untouched — this is the host's question, not a delete."""
+    doc = document(tmp_path, **{"library.enabled": False, "library.root": str(library)})
+    proc = run("--no-server", "--settings", doc, "--facts", "list")
+    assert (proc.returncode, proc.stderr, json.loads(proc.stdout)) == (0, "", [])
+    assert (library / "alpha" / "SKILL.md").is_file()
+
+
+def test_an_explicit_root_beats_the_settings_document(library: Path, tmp_path: Path, run):
+    """A flag is this call's own word about this call; the document is what the
+    machine says when nobody spoke."""
+    doc = document(tmp_path, **{"library.root": str(tmp_path / "elsewhere")})
+    proc = run("--root", library, "--no-server", "--settings", doc, "--facts", "list")
+    assert [entry["name"] for entry in json.loads(proc.stdout)] == ["alpha", "beta"]
+
+
+def test_a_settings_document_that_cannot_be_read_is_a_refusal(tmp_path: Path, run):
+    """Not a fall-back to the defaults: every value would come back as a default
+    and the person would be looking at a form that ignores what they set."""
+    proc = run("--no-server", "--settings", tmp_path / "gone.json", "list")
+    assert (proc.returncode, proc.stdout) == (1, "")
+    assert "cannot read settings at" in proc.stderr
+
+
+# -- the lines the declaration promises the host ---------------------------------
+
+
+def declared(index: int = 0) -> tuple[str, str]:
+    """The fact and the tool `component.json` hands the host, verbatim: what this
+    module promises is runnable, so the promise is read from the file and run."""
+    decl = json.loads((ROOT / "component.json").read_text(encoding="utf-8"))
+    return decl["facts"]["skills"], decl["tools"][index]["command"]
+
+
+def argv_of(statement: str, **values: str) -> list[str]:
+    """A declared statement as the words a caller passes: an optional group the
+    values can fill is kept, one they cannot is dropped whole — the host's own
+    rule, and the reason `--settings` is optional at all."""
+    filled = re.sub(
+        r"\[[^\]]*\]",
+        lambda m: m.group(0)[1:-1]
+        if all(n in values for n in re.findall(r"\{(\w+)\}", m.group(0)))
+        else " ",
+        statement,
+    )
+    return [word.format(**values) for word in shlex.split(filled)]
+
+
+def test_the_lines_the_declaration_promises_the_host_actually_run(library: Path, tmp_path: Path, run):
+    """A statement is a CONTRACT with the host: it types the words, this module
+    reads them. Nothing else in this file would notice a flag in an order the
+    parser does not accept — the host would, at the first prompt."""
+    doc = document(tmp_path, **{"library.root": str(library)})
+    fact, tool = declared()
+    proc = run(*argv_of(fact, settings=str(doc)))
+    assert (proc.returncode, proc.stderr) == (0, "")
+    assert [entry["name"] for entry in json.loads(proc.stdout)] == ["alpha", "beta"]
+    proc = run(*argv_of(tool, settings=str(doc), name="alpha"))
+    assert (proc.returncode, proc.stderr) == (0, "")
+    assert json.loads(proc.stdout)["content"].startswith("---")
+
+
+def test_a_declared_line_still_runs_when_no_document_was_named(library: Path, run):
+    """The optional group is the whole reason a component runs by hand at all: no
+    settings document, no `--settings`, and the call must still be a call."""
+    fact, _ = declared()
+    proc = run("--root", library, *argv_of(fact))
+    assert (proc.returncode, proc.stderr) == (0, "")
+    assert [entry["name"] for entry in json.loads(proc.stdout)] == ["alpha", "beta"]
 
 
 # -- install: the library's own write verb ---------------------------------------

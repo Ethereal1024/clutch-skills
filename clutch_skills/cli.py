@@ -1,6 +1,6 @@
 """Flag wiring: argparse -> the skills service -> stdout.
 
-  clutch-skills [--json] [--root DIR] <command> [flags]
+  clutch-skills [--json] [--root DIR] [--settings PATH] <command> [flags]
 
 - human (default): readable text on stdout, `ERROR: <reason>` on stderr
 - --json: ONE compact JSON object on stdout for both outcomes, so callers parse
@@ -34,7 +34,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from . import __version__, client, server, skills
+from . import __version__, client, server, settings, skills
 from .install import DEFAULT_FILES, install
 from .skills import SkillError
 
@@ -62,9 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--root",
-        default=str(server.BUNDLED_ROOT),
+        default="",
         metavar="DIR",
-        help=f"skills root to serve (default: the bundled {server.BUNDLED_ROOT})",
+        help=f"skills root to serve (default: {settings.ROOT} from --settings, else this machine's "
+        f"own {settings.LIBRARY})",
+    )
+    parser.add_argument(
+        "--settings",
+        default="",
+        metavar="PATH",
+        help="the settings document a host wrote for this component (its `host.settings` fact)",
     )
     parser.add_argument("--url", default="", metavar="URL", help="talk to this service instead of discovering one")
     parser.add_argument("--port", type=int, default=0, metavar="N", help="talk to a service on this localhost port")
@@ -139,7 +146,13 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(args: argparse.Namespace) -> tuple[dict, str]:
     """(wire payload, human text) for one command."""
-    root = str(Path(args.root).expanduser())
+    configured = settings.read(args.settings)
+    # The library this invocation serves: what the person asked for on the
+    # command line, else what they set in the component's settings form, else
+    # this machine's own (`settings.library`). Resolved ONCE, before anything is
+    # looked up, so the service this call reaches is keyed by the root it
+    # actually serves and the client below asks the same one.
+    root = str(settings.library(args.root or settings.root(configured), server.BUNDLED_ROOT))
     if not (args.url or args.port):
         # A root we must find (or start) a service for is checked here, so a bad
         # root is the library refusal the exit codes promise — not a service that
@@ -152,6 +165,12 @@ def _run(args: argparse.Namespace) -> tuple[dict, str]:
         # before any call exists — and only `list` has such an answer.
         if args.command != "list":
             raise SkillError("bad-command", f"--facts answers `list` only, not `{args.command}`")
+        if not settings.enabled(configured):
+            # switched off: the fact is EMPTY, and everything downstream of it
+            # follows from that — the gate it stands behind has nothing in it, so
+            # the tool is withheld and the prompt line is dropped. The skills
+            # themselves are untouched; a sentence here would be a second rule.
+            return {"root": root, "skills": []}, ""
         return server.catalog_payload(skills.checked_root(root)), ""
     if args.command == "install":
         # Writing into a library is that library's own business, and the library
@@ -164,22 +183,22 @@ def _run(args: argparse.Namespace) -> tuple[dict, str]:
         )
         return payload, _install_text(payload)
     if args.command == "list":
-        payload = server.catalog_payload(skills.checked_root(root)) if args.no_server else _client(args).catalog()
+        payload = server.catalog_payload(skills.checked_root(root)) if args.no_server else _client(args, root).catalog()
         return payload, _section(payload) or f"(no skills in {payload['root']})"
     if args.command == "show":
         payload = (
             server.skill_payload(skills.checked_root(root), args.name, args.file)
             if args.no_server
-            else _client(args).skill(args.name, args.file)
+            else _client(args, root).skill(args.name, args.file)
         )
         return payload, payload["content"]
     if args.no_server:  # health/root describe the running service, not a folder
         raise client.ServiceUnavailable(f"--no-server cannot answer `{args.command}`: it needs the running service")
     if args.command == "health":
-        payload = _client(args).health()
+        payload = _client(args, root).health()
         return payload, f"ok root={payload['root']} pid={payload['pid']} skills={payload['skills']}"
     if args.command == "root":
-        payload = _client(args).health() if not args.dir else _client(args).set_root(_absolute(args.dir))
+        payload = _client(args, root).health() if not args.dir else _client(args, root).set_root(_absolute(args.dir))
         return payload, f"root: {payload['root']} ({payload['skills']} skills)"
     raise SkillError("bad-command", f"unknown command: {args.command}")  # unreachable: subparsers required
 
@@ -190,8 +209,8 @@ def _absolute(path: str) -> str:
     return str(Path(path).expanduser().resolve())
 
 
-def _client(args: argparse.Namespace) -> client.Client:
-    return client.Client(client.base_url(str(Path(args.root).expanduser()), url=args.url, port=args.port))
+def _client(args: argparse.Namespace, root: str) -> client.Client:
+    return client.Client(client.base_url(root, url=args.url, port=args.port))
 
 
 def _section(payload: dict) -> str:

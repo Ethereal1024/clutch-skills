@@ -7,7 +7,20 @@
     "importable": true
   },
   "requires": ["python"],
-  "facts": { "skills": "--no-server --facts list" },
+  "vars": { "settings": "host.settings" },
+  "facts": { "skills": "--no-server [--settings {settings}] --facts list" },
+  "settings": {
+    "library.enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Offer this library to the model. Off answers an empty catalog, so the tool and the prompt paragraph that spends it go with it — nothing on disk is touched."
+    },
+    "library.root": {
+      "type": "string",
+      "default": "",
+      "description": "Directory to serve instead of this machine's own library (~/.clutch/skills). Point it at a library you already keep, such as ~/.agents/skills."
+    }
+  },
   "prompt": "PROMPT.md",
   "ui": { "label": "skill library", "status": true },
   "tools": [
@@ -28,7 +41,7 @@
         },
         "required": ["name"]
       },
-      "command": "--envelope show {name} [--file {file}]",
+      "command": "[--settings {settings}] --envelope show {name} [--file {file}]",
       "gate": "skills"
     }
   ]
