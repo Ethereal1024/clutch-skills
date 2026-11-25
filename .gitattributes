@@ -2,6 +2,12 @@
 # the release tooling — and this file — never rides along into a user's machine.
 # `.gitignore`/`pyproject.toml`/`tests/` stay: the artifact is then the same set
 # of files a dev checkout tar carries (host's scripts/build-component-tar.sh).
-.github/ export-ignore
-scripts/ export-ignore
-.gitattributes export-ignore
+#
+# The leading slashes are load-bearing. An unanchored `scripts/` is a pattern
+# matched at EVERY depth, so it also dropped `skills/readme-crafter/scripts/` —
+# the scanner the skill's SKILL.md tells the agent to run — from every release,
+# while a dev checkout kept it: the skill shipped broken and nothing here said
+# so, because the suite runs against the checkout.
+/.github/ export-ignore
+/scripts/ export-ignore
+/.gitattributes export-ignore

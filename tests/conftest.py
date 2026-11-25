@@ -53,9 +53,11 @@ def write_skill(root: Path, directory: str, text: str, **files: str) -> Path:
     """Create one skill directory (SKILL.md + optional extra files)."""
     target = Path(root) / directory
     target.mkdir(parents=True, exist_ok=True)
-    (target / SKILL_MD).write_text(text, encoding="utf-8", newline="\n")
+    with open((target / SKILL_MD), "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
     for name, content in files.items():
-        (target / name.replace("__", ".")).write_text(content, encoding="utf-8", newline="\n")
+        with open((target / name.replace("__", ".")), "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
     return target
 
 

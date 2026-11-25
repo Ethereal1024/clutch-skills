@@ -1,6 +1,6 @@
 {
   "name": "clutch-skills",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "subject": "skill-library",
   "launch": {
     "argv": ["{py}", "-m", "clutch_skills"],

@@ -177,7 +177,10 @@ def test_a_bare_list_serves_this_machines_own_library(home: Path, run):
     """
     proc = run("--no-server", "list")
     assert (proc.returncode, proc.stderr) == (0, "")
-    seeded = [line.split(":")[0].removeprefix("- ") for line in proc.stdout.splitlines()[1:]]
+    # no `str.removeprefix`: this suite has to run on the floor (3.8) too, and
+    # that method is 3.9's
+    head = [line.split(":")[0] for line in proc.stdout.splitlines()[1:]]
+    seeded = [name[2:] if name.startswith("- ") else name for name in head]
     assert seeded  # the shipped library is not empty, or nothing was proven
     assert seeded == [s["name"] for s in server.catalog_payload(server.BUNDLED_ROOT)["skills"]]
     # ...and this machine's library now holds what it shipped, as its own copy
